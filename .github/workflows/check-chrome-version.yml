@@ -1,0 +1,35 @@
+# .github/workflows/check-chrome-version.yml
+
+name: Check for Latest Chrome Version
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: '0 8 * * *'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Fetch the latest version number
+      - name: Get Latest Stable Chrome Version
+        id: get_version
+        run: |
+          # Use curl to download the official JSON file from Google's Chrome for Testing endpoints.
+          # Use jq to parse the JSON and extract the version number for the "Stable" channel.
+          # The '-r' flag in jq removes the quotes from the output string.
+          LATEST_VERSION=$(curl -s 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json' | jq -r '.channels.Stable.version')
+          
+          # Print the version to the workflow log
+          echo "Latest Stable Chrome Version: $LATEST_VERSION"
+          
+          # Set the version as an output parameter for other steps to use
+          echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+
+      # Step 2: An example of how to use the version in a subsequent step
+      - name: Use the Version
+        run: |
+          echo "The script found version ${{ steps.get_version.outputs.version }}."
+          echo "This could be used to download a specific chromedriver or run tests."
