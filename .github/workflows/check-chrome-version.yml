@@ -11,11 +11,15 @@ on:
 jobs:
   check-version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for pushing changes
 
     steps:
       # Step 1: Checkout the repository to access files
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 2: Fetch the latest version number
       - name: Get Latest Stable Chrome Version
@@ -66,4 +70,4 @@ jobs:
           git config --local user.name "GitHub Action"
           git add current-chrome-version.txt
           git commit -m "Update Chrome version to ${{ steps.get_version.outputs.version }}"
-          git push
+          git push origin main
