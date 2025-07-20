@@ -39,7 +39,10 @@ jobs:
       # Step 3: Check current version and update if needed
       - name: Check and Update Chrome Version
         run: |
-          LATEST_VERSION="${{ steps.get_version.outputs.version }}"
+          FULL_VERSION="${{ steps.get_version.outputs.version }}"
+          
+          # Extract only the major version (digits before the first dot)
+          LATEST_VERSION=$(echo "$FULL_VERSION" | cut -d'.' -f1)
           
           # Read current version from file, default to empty if file doesn't exist
           if [ -f "current-chrome-version.txt" ]; then
@@ -48,8 +51,9 @@ jobs:
             CURRENT_VERSION=""
           fi
           
-          echo "Current version: $CURRENT_VERSION"
-          echo "Latest version: $LATEST_VERSION"
+          echo "Full version: $FULL_VERSION"
+          echo "Current major version: $CURRENT_VERSION"
+          echo "Latest major version: $LATEST_VERSION"
           
           # Compare versions (simple string comparison should work for Chrome versions)
           if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
@@ -66,8 +70,10 @@ jobs:
       - name: Commit updated version
         if: steps.update_version.outputs.updated == 'true'
         run: |
+          FULL_VERSION="${{ steps.get_version.outputs.version }}"
+          MAJOR_VERSION=$(echo "$FULL_VERSION" | cut -d'.' -f1)
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add current-chrome-version.txt
-          git commit -m "Update Chrome version to ${{ steps.get_version.outputs.version }}"
+          git commit -m "Update Chrome major version to $MAJOR_VERSION (from $FULL_VERSION)"
           git push origin main
