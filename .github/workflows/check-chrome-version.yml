@@ -13,7 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Fetch the latest version number
+      # Step 1: Checkout the repository to access files
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Fetch the latest version number
       - name: Get Latest Stable Chrome Version
         id: get_version
         run: |
@@ -28,8 +32,38 @@ jobs:
           # Set the version as an output parameter for other steps to use
           echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
 
-      # Step 2: An example of how to use the version in a subsequent step
-      - name: Use the Version
+      # Step 3: Check current version and update if needed
+      - name: Check and Update Chrome Version
         run: |
-          echo "The script found version ${{ steps.get_version.outputs.version }}."
-          echo "This could be used to download a specific chromedriver or run tests."
+          LATEST_VERSION="${{ steps.get_version.outputs.version }}"
+          
+          # Read current version from file, default to empty if file doesn't exist
+          if [ -f "current-chrome-version.txt" ]; then
+            CURRENT_VERSION=$(cat current-chrome-version.txt | tr -d '\n')
+          else
+            CURRENT_VERSION=""
+          fi
+          
+          echo "Current version: $CURRENT_VERSION"
+          echo "Latest version: $LATEST_VERSION"
+          
+          # Compare versions (simple string comparison should work for Chrome versions)
+          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+            echo "Version has changed! Updating file..."
+            echo "$LATEST_VERSION" > current-chrome-version.txt
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version unchanged. No update needed."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          fi
+        id: update_version
+
+      # Step 4: Commit changes if version was updated
+      - name: Commit updated version
+        if: steps.update_version.outputs.updated == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add current-chrome-version.txt
+          git commit -m "Update Chrome version to ${{ steps.get_version.outputs.version }}"
+          git push
