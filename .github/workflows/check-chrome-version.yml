@@ -1,4 +1,7 @@
-# .github/workflows/check-chrome-version.yml
+# Publishes the current stable Chrome major version in current-chrome-version.txt.
+# The Chromium Mask extension fetches that file from raw.githubusercontent.com, so a bad value
+# committed here reaches every user: only a plain integer that is not lower than the current
+# value is ever written, and any failure fails the run (GitHub emails the repo owner).
 
 name: Check for Latest Chrome Version
 
@@ -6,74 +9,80 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: '0 8 * * *'
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: write
 
 jobs:
   check-version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Required for pushing changes
 
     steps:
-      # Step 1: Checkout the repository to access files
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 2: Fetch the latest version number
-      - name: Get Latest Stable Chrome Version
-        id: get_version
+      - name: Determine latest stable Chrome major version
+        id: latest
         run: |
-          # Use curl to download the official JSON file from Google's Chrome for Testing endpoints.
-          # Use jq to parse the JSON and extract the version number for the "Stable" channel.
-          # The '-r' flag in jq removes the quotes from the output string.
-          LATEST_VERSION=$(curl -s 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json' | jq -r '.channels.Stable.version')
-          
-          # Print the version to the workflow log
-          echo "Latest Stable Chrome Version: $LATEST_VERSION"
-          
-          # Set the version as an output parameter for other steps to use
-          echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      # Step 3: Check current version and update if needed
-      - name: Check and Update Chrome Version
-        run: |
-          FULL_VERSION="${{ steps.get_version.outputs.version }}"
-          
-          # Extract only the major version (digits before the first dot)
-          LATEST_VERSION=$(echo "$FULL_VERSION" | cut -d'.' -f1)
-          
-          # Read current version from file, default to empty if file doesn't exist
-          if [ -f "current-chrome-version.txt" ]; then
-            CURRENT_VERSION=$(cat current-chrome-version.txt | tr -d '\n')
-          else
-            CURRENT_VERSION=""
+          # Primary: Chrome for Testing. Fallback: Chromium Dash (tracks releases more closely).
+          fetch_primary() {
+            curl -fsS --retry 3 --max-time 30 \
+              'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json' \
+              | jq -r '.channels.Stable.version'
+          }
+          fetch_fallback() {
+            curl -fsS --retry 3 --max-time 30 \
+              'https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Windows&num=1' \
+              | jq -r '.[0].version'
+          }
+
+          MAJOR=""
+          for source in fetch_primary fetch_fallback; do
+            FULL=$($source || true)
+            CANDIDATE="${FULL%%.*}"
+            if [[ "$CANDIDATE" =~ ^[0-9]{2,3}$ ]]; then
+              echo "Latest stable via $source: $FULL"
+              MAJOR="$CANDIDATE"
+              echo "full=$FULL" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            echo "::warning::$source returned an unusable value: '${FULL}'"
+          done
+
+          if [ -z "$MAJOR" ]; then
+            echo "::error::No source returned a valid Chrome version"
+            exit 1
           fi
-          
-          echo "Full version: $FULL_VERSION"
-          echo "Current major version: $CURRENT_VERSION"
-          echo "Latest major version: $LATEST_VERSION"
-          
-          # Compare versions (simple string comparison should work for Chrome versions)
-          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-            echo "Version has changed! Updating file..."
-            echo "$LATEST_VERSION" > current-chrome-version.txt
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Version unchanged. No update needed."
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+
+      - name: Update version file if newer
+        id: update
+        env:
+          LATEST: ${{ steps.latest.outputs.major }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(tr -d '[:space:]' < current-chrome-version.txt 2>/dev/null || true)
+          echo "Current: '${CURRENT}'  Latest: '${LATEST}'"
+
+          if [[ "$CURRENT" =~ ^[0-9]+$ ]] && [ "$LATEST" -le "$CURRENT" ]; then
+            echo "No newer version. Nothing to do."
             echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$LATEST" > current-chrome-version.txt
+            echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
-        id: update_version
 
-      # Step 4: Commit changes if version was updated
       - name: Commit updated version
-        if: steps.update_version.outputs.updated == 'true'
+        if: steps.update.outputs.updated == 'true'
+        env:
+          MAJOR: ${{ steps.latest.outputs.major }}
+          FULL: ${{ steps.latest.outputs.full }}
         run: |
-          FULL_VERSION="${{ steps.get_version.outputs.version }}"
-          MAJOR_VERSION=$(echo "$FULL_VERSION" | cut -d'.' -f1)
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
           git add current-chrome-version.txt
-          git commit -m "Update Chrome major version to $MAJOR_VERSION (from $FULL_VERSION)"
+          git commit -m "Update Chrome major version to $MAJOR (from $FULL)"
           git push origin main
